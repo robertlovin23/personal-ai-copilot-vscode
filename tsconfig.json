@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+	  "target": "esnext",
+	  "module": "commonjs",
+	  "lib": ["esnext", "dom"],  // Add "dom" here
+	  "moduleResolution": "node",
+	  "outDir": "./out",
+	  "strict": true,
+	  "esModuleInterop": true,
+	  "skipLibCheck": true,
+	  "forceConsistentCasingInFileNames": true
+	}
+  }
+  
