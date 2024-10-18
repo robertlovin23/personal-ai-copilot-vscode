@@ -1,6 +1,6 @@
-# code-edit-qwen25 README
+# personal-ai-copilot-vscode  README
 
-This is the README for your extension "code-edit-qwen25". After writing up a brief description, we recommend including the following sections.
+This is the README for your extension "personal-ai-copilot-vscode". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 
