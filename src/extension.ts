@@ -42,9 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
     9. **Comments and Documentation**: Encourage the use of comments and self-documenting code. Provide short comments in your code examples to help users understand what each section does.
     10. **User Interaction**: Ask clarifying questions if the problem or code snippet isn’t clear, and encourage the user to provide more context if needed.
     11. **Maintain Positive Tone**: Always provide feedback in a friendly, constructive, and supportive manner. Ensure that your suggestions feel like guidance rather than criticism.
-    
     Remember that your goal is not only to solve the immediate issue but also to help the user become a better developer by sharing best practices and insights.
-    
     ` 
 
     let selectModel = vscode.commands.registerCommand('code-edit-qwen25.selectModel', async () => {
@@ -59,9 +57,30 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage('Invalid model selection');
       }
     });
+
+    let refactorCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.refactor', async (editor) => {
+      const userMessage = editor.document.getText(editor.selection);
+      const inputs = `Refactor this code for better readability and performance: ${userMessage}. Put any text suggestions into code comments like this:
+      /** Put any text suggestions into code comments if you liked */`
+      const response = await inference.textGeneration({
+          model: selectedModel,
+          inputs,
+          max_tokens: 512,
+      });
+
+      
+
+      editor.edit(editBuilder => {
+          vscode.window.showInformationMessage(`Respnse details: ${response.details}`);
+          let generatedMessage = filterAIResponse(response.generated_text, userMessage, inputs);
+          editBuilder.replace(editor.selection, generatedMessage);
+      });
+  });
+
     
     // Create a webview for text generation inside the new sidebar
     vscode.window.registerWebviewViewProvider('textGenerationView', new TextGenerationViewProvider(context, inference));
+
 
     let disposable = vscode.commands.registerCommand('code-edit-qwen25.helloWorld', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -82,7 +101,7 @@ export function activate(context: vscode.ExtensionContext) {
                 let generatedMessage = response.generated_text;
 
                 // Remove ANNOTATION_PROMPT and userMessage from the AI response
-                generatedMessage = filterAIResponse(generatedMessage, ANNOTATION_PROMPT, userMessage);
+                generatedMessage = filterAIResponse(generatedMessage, userMessage, ANNOTATION_PROMPT);
 
                 // Append the user input and AI response to the conversation history
                 conversationHistory.push({ userInput: userMessage, aiResponse: generatedMessage });
@@ -98,20 +117,33 @@ export function activate(context: vscode.ExtensionContext) {
 
     });
 
-    context.subscriptions.push(disposable, selectModel);
+    context.subscriptions.push(refactorCode, disposable, selectModel);
 }
 
+let suggestionCount = 0;
+
+const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+statusBarItem.text = `AI Suggestions: ${suggestionCount}`;
+statusBarItem.show();
+
+// Each time a suggestion is made, increment the counter
+suggestionCount++;
+statusBarItem.text = `AI Suggestions: ${suggestionCount}`;
+
+
+
+
 // Function to filter out the ANNOTATION_PROMPT and userMessage from the AI's response
-function filterAIResponse(generatedMessage: string, annotationPrompt: string, userMessage: string): string {
+function filterAIResponse(generatedMessage: string, userMessage: string, annotationPrompt?: string): string {
   let filteredResponse = generatedMessage;
 
   // Remove the ANNOTATION_PROMPT if present
-  if (filteredResponse.startsWith(annotationPrompt)) {
+  if (annotationPrompt && filteredResponse.startsWith(annotationPrompt)) {
       filteredResponse = filteredResponse.substring(annotationPrompt.length).trim();
   }
 
   // Remove the user input if present in the response
-  if (filteredResponse.startsWith(userMessage)) {
+  if (filteredResponse.includes(userMessage) || filteredResponse.startsWith(userMessage)) {
       filteredResponse = filteredResponse.substring(userMessage.length).trim();
   }
 
@@ -158,16 +190,6 @@ class TextGenerationViewProvider implements vscode.WebviewViewProvider {
                 </div>`;
         }).join(''); // Join all conversation entries
 
-
-        const modelDropdown = `
-          <select class="select-model">
-            <option value="deepseek-ai/deepseek-coder-1.3b-instruct">DeepSeek</option>
-            <option value="deepseek-ai/deepseek-coder-1.3b-instruct">DeepSeek</option>
-          </select>
-        `
-        
-        
-
         // Add loading spinner or message if isLoading is true
         const loadingHtml = isLoading ? `<div class="loading">Loading response... <div class="spinner"></div></div>` : '';
 
@@ -198,6 +220,7 @@ class TextGenerationViewProvider implements vscode.WebviewViewProvider {
             </head>
             <body>
                 <h1>Personal Co-Pilot</h1>
+                <p>Highlight some code to get some AI feedback</p>
                 ${conversationHtml} <!-- Render the entire conversation history -->
                 ${loadingHtml} <!-- Show loading indicator if isLoading is true -->
             </body>

@@ -18,6 +18,10 @@
         "title": "Personal Co-Pilot"
       },
       {
+        "command": "code-edit-qwen25.refactor",
+        "title": "Refactor Code"
+      },
+      {
         "command": "code-edit-qwen25.selectModel",
         "title": "Select Model for Code Generation"
       }
