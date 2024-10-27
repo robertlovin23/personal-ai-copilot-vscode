@@ -15,7 +15,7 @@
     "commands": [
       {
         "command": "code-edit-qwen25.helloWorld",
-        "title": "Personal Co-Pilot"
+        "title": "Explain Code"
       },
       {
         "command": "code-edit-qwen25.refactor",
@@ -29,18 +29,18 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "codeEditSidebar",  
-          "title": "AI Assistant",   
-          "icon": "resources/brain-svgrepo-com.svg"  
+          "id": "codeEditSidebar",
+          "title": "AI Assistant",
+          "icon": "resources/brain-svgrepo-com.svg"
         }
       ]
     },
     "views": {
-      "codeEditSidebar": [  
+      "codeEditSidebar": [
         {
-          "id": "textGenerationView",  
-          "name": "Generate Text",     
-          "type": "webview"            
+          "id": "textGenerationView",
+          "name": "Generate Text",
+          "type": "webview"
         }
       ]
     }
@@ -69,7 +69,9 @@
     "@huggingface/hub": "^0.18.2",
     "@huggingface/inference": "^2.8.1",
     "@huggingface/transformers": "^3.0.0-alpha.21",
+    "groq-sdk": "^0.7.0",
     "nvm": "^0.0.4",
+    "ollama": "^0.5.9",
     "torch": "^0.2.7"
   }
 }

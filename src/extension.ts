@@ -1,24 +1,28 @@
 import * as vscode from 'vscode';
+import { Ollama } from 'ollama'
 import { HfInference } from '@huggingface/inference';
 
 interface Models {
-  label: any,
-  description: any
+  label: string,
+  description: string
 }
 
 let conversationHistory: { userInput: string, aiResponse: string }[] = []; // Array to store the conversation history
 
 // List of models to choose from
 const models: Models[] = [
-  { label: '01-ai/Yi-Coder-1.5B-Chat', description: 'Yi Coder 1.5B' },
-  { label: 'deepseek-ai/deepseek-coder-1.3b-instruct', description: 'DeepSeek Coder 1.3B' },
-  { label: 'Qwen/Qwen2.5-Coder-1.5B-Instruct', description: 'Qwen2.5 Coder 1.5B' }, // Add more models as needed
+  { label: 'llama3.2:3b', description: 'Llama3.2 3B' },
+  { label: 'deepseek-coder-v2:16b', description: 'DeepSeek Coder 16B' },
+  { label: 'qwen2.5-coder:7b', description: 'Qwen2.5 Coder 7B' }, // Add more models as needed
+  { label: 'granite3-moe:3b', description: 'IBM Granite3 Moe 3B ' }, // Add more models as needed
+
 ];
 
-let selectedModel = models[1].label // Default model
+let selectedModel = models[0].label // Default model
 
 // This method is called when your extension is activated
 export function activate(context: vscode.ExtensionContext) {
+    const ollama = new Ollama({ host: 'http://127.0.0.1:11434' })
     console.log("Extension 'code-edit-qwen25' is now active!");
 
     const HF_TOKEN = process.env.HF_TOKEN;
@@ -44,7 +48,6 @@ export function activate(context: vscode.ExtensionContext) {
     11. **Maintain Positive Tone**: Always provide feedback in a friendly, constructive, and supportive manner. Ensure that your suggestions feel like guidance rather than criticism.
     Remember that your goal is not only to solve the immediate issue but also to help the user become a better developer by sharing best practices and insights.
     ` 
-
     let selectModel = vscode.commands.registerCommand('code-edit-qwen25.selectModel', async () => {
       const pickedModel = await vscode.window.showQuickPick(models, {
         placeHolder: 'Select a model for code generation',
@@ -60,27 +63,70 @@ export function activate(context: vscode.ExtensionContext) {
 
     let refactorCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.refactor', async (editor) => {
       const userMessage = editor.document.getText(editor.selection);
-      const inputs = `Refactor this code for better readability and performance: ${userMessage}. Put any text suggestions into code comments like this:
-      /** Put any text suggestions into code comments if you liked */`
-      const response = await inference.textGeneration({
-          model: selectedModel,
-          inputs,
-          max_tokens: 512,
-      });
-
+      const inputs = `Refactor the following code to improve readability, performance, and maintainability. 
+      Please return only the refactored code, with inline comments explaining each change, in JavaScript format:
+      ${userMessage}`;
       
+      const response = await ollama.generate({
+        model: selectedModel,
+        prompt: inputs,
+        options: {
+            temperature: 0.7,                 // Control response randomness
+            top_p: 0.9,                       // Set to balance diversity and focus
+        }
+      })
+
+      let data = response.response
+      data = data.replace(/```[a-zA-Z]*|```/g, "");
+      data = data.replace(/^(\d\.\s)/gm, '// $1');
 
       editor.edit(editBuilder => {
-          vscode.window.showInformationMessage(`Respnse details: ${response.details}`);
-          let generatedMessage = filterAIResponse(response.generated_text, userMessage, inputs);
-          editBuilder.replace(editor.selection, generatedMessage);
+          vscode.window.showInformationMessage(`Respnse details: ${response.response}`);
+          editBuilder.replace(editor.selection, data);
       });
   });
 
-    
+  let editWhileType = vscode.workspace.onDidChangeTextDocument(async (event) => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || event.document !== editor.document) return;
+
+    const position = editor.selection.active;
+    const lineText = editor.document.lineAt(position.line).text.substring(0, position.character);
+    const inputs = `Refactor the following code to improve readability, performance, and maintainability. 
+    Please only return code that would be the next logical step, no comments`
+
+    try {
+        const newResponse = await ollama.generate({
+            model: selectedModel,
+            prompt: inputs + lineText,
+            options: {
+                temperature: 0.7,
+                top_p: 0.9,
+            },
+        });
+
+        const generatedMessage = newResponse.response;
+        
+        // Insert the suggestion as a completion item
+        const completionItem = new vscode.CompletionItem(generatedMessage, vscode.CompletionItemKind.Snippet);
+        completionItem.range = new vscode.Range(position, position);
+        completionItem.insertText = generatedMessage;
+
+        // Show completion item in the editor
+        vscode.languages.registerCompletionItemProvider('*', {
+            provideCompletionItems() {
+                return [completionItem];
+            },
+        });
+        vscode.commands.executeCommand('textGenerationView.update', conversationHistory, false);
+
+    } catch (error: any) {
+        vscode.window.showErrorMessage(`Error generating code completion: ${error.message}`);
+    }
+});
+
     // Create a webview for text generation inside the new sidebar
     vscode.window.registerWebviewViewProvider('textGenerationView', new TextGenerationViewProvider(context, inference));
-
 
     let disposable = vscode.commands.registerCommand('code-edit-qwen25.helloWorld', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -92,16 +138,21 @@ export function activate(context: vscode.ExtensionContext) {
             console.log(selectedModel)
             vscode.window.showInformationMessage(`Model changed to ${selectedModel}`);
             try {
-                const response = await inference.textGeneration({
-                    model: selectedModel,
-                    inputs: ANNOTATION_PROMPT + userMessage,
-                    max_tokens: 4000,
-                });
+                const newResponse = await ollama.generate({
+                  model: selectedModel,
+                  prompt: ANNOTATION_PROMPT + userMessage,
+                  options: {
+                    temperature: 0.7,                 // Control response randomness
+                    top_p: 0.9,                       // Set to balance diversity and focus
+                }
+                })
 
-                let generatedMessage = response.generated_text;
+                vscode.window.showInformationMessage(`Respnse details: ${newResponse}`);
 
-                // Remove ANNOTATION_PROMPT and userMessage from the AI response
-                generatedMessage = filterAIResponse(generatedMessage, userMessage, ANNOTATION_PROMPT);
+                let generatedMessage = newResponse.response;
+
+                // // Remove ANNOTATION_PROMPT and userMessage from the AI response
+                // generatedMessage = filterAIResponse(generatedMessage, userMessage, ANNOTATION_PROMPT);
 
                 // Append the user input and AI response to the conversation history
                 conversationHistory.push({ userInput: userMessage, aiResponse: generatedMessage });
@@ -117,7 +168,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     });
 
-    context.subscriptions.push(refactorCode, disposable, selectModel);
+    context.subscriptions.push(editWhileType, refactorCode, disposable, selectModel);
 }
 
 let suggestionCount = 0;
@@ -129,9 +180,6 @@ statusBarItem.show();
 // Each time a suggestion is made, increment the counter
 suggestionCount++;
 statusBarItem.text = `AI Suggestions: ${suggestionCount}`;
-
-
-
 
 // Function to filter out the ANNOTATION_PROMPT and userMessage from the AI's response
 function filterAIResponse(generatedMessage: string, userMessage: string, annotationPrompt?: string): string {
@@ -153,11 +201,9 @@ function filterAIResponse(generatedMessage: string, userMessage: string, annotat
 class TextGenerationViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private context: vscode.ExtensionContext;
-    private inference: HfInference;
 
     constructor(context: vscode.ExtensionContext, inference: HfInference) {
         this.context = context;
-        this.inference = inference;
     }
 
     resolveWebviewView(view: vscode.WebviewView): void | Thenable<void> {
@@ -200,6 +246,7 @@ class TextGenerationViewProvider implements vscode.WebviewViewProvider {
                     body { font-family: Arial, sans-serif; padding: 10px; }
                     .user-input { color: #007acc; font-weight: bold; }
                     .ai-response { background-color: #f4f4f4; padding: 10px; border-radius: 5px; margin-top: 20px; color: black; }
+                    .code-block { text-wrap: wrap; }
                     .loading { font-size: 16px; color: #888888; margin-top: 20px; }
                     .spinner {
                         margin-left: 10px;
@@ -230,6 +277,9 @@ class TextGenerationViewProvider implements vscode.WebviewViewProvider {
     formatText(text: string): string {
         return text
             .replace(/```(.*?)```/gs, '<pre class="code-block">$1</pre>') // Format code blocks
+            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')     
+            .replace(/\`(.*?)\`/g, '<b>$1</b>')    
+            .replace(/^### (.*$)/gm, '<h3>$1</h3>')    
             .replace(/\n/g, '<br>');  // Preserve line breaks for plain text
     }
 }
