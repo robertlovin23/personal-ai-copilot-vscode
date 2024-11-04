@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
 import { Ollama } from 'ollama';
 import eslint from 'eslint';
+import generateUnitTests from './commands/generateUnitTests'
+import refactorCode from './commands/refactorCode';
+import lintCode from './commands/lintCode';
 import prettier from 'prettier';
 import { HfInference } from '@huggingface/inference';
 
@@ -9,7 +12,6 @@ interface Models {
   description: string
 }
 
-let eslintEngine = new eslint.ESLint({ fix: true });
 let conversationHistory: { userInput: string, aiResponse: string }[] = []; // Array to store the conversation history
 
 const config = vscode.workspace.getConfiguration('files', null);
@@ -59,7 +61,6 @@ export function activate(context: vscode.ExtensionContext) {
     2. Suggest only essential improvements related to readability, maintainability, or performance.
     3. Return only the corrected or refactored code in JavaScript format without any additional explanations, line breaks, or indentation.
     4. Ensure the code is formatted with consistent spacing and compact layout, avoiding unnecessary line breaks.
-    
     Code to explain:
     `;
     
@@ -104,67 +105,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    let refactorCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.refactor', async (editor) => {
-      const userMessage = editor.document.getText(editor.selection);
-      const inputs = `Refactor the following code to improve readability, performance, and maintainability. Return only the refactored code itself in JavaScript format, with inline comments explaining each change. No introductory phrases or non-commented text outside the code block:
-      ${userMessage}`;
-      
-      
-      const response = await ollama.generate({
-        model: selectedModel,
-        prompt: inputs,
-        options: {
-            temperature: 0.6,                 // Control response randomness
-            top_p: 0.9,                       // Set to balance diversity and focus
-        }
-      })
-
-      let data = response.response
-      data = data.replace(/```[a-zA-Z]*|```/g, "");
-      data = data.replace(/^(\d\.\s)/gm, '// $1');
-
-      editor.edit(editBuilder => {
-          vscode.window.showInformationMessage(`Respnse details: ${response.response}`);
-          editBuilder.replace(editor.selection, data);
-      });
+    let refactoredCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.refactor', async (editor) => {
+        await refactorCode(editor, selectedModel, languageToTestFrameworkMap, ollama, prettier, languageToParser);
     });
 
-    let generateUnitTests = vscode.commands.registerTextEditorCommand('code-edit-qwen25.generateUnitTests', async (editor) => {
-        let userMessage = editor.document.getText(editor.selection);
-        const language = editor.document.languageId;
-
-        const testFramework = languageToTestFrameworkMap[language];
-        if (!testFramework) {
-            vscode.window.showErrorMessage(`No test framework found for ${language}`);
-            return;
-        }
-        const inputs = `Given the following code snippet, write unit tests using ${testFramework} to test the functionality of the code. 
-        Return only the unit tests without any additional explanations or comments.
-        ${userMessage}`;
-
-        const response = await ollama.generate({
-            model: selectedModel,
-            prompt: inputs,
-            options: {
-                temperature: 0.5,  
-                top_p: 0.9,
-            },
-        });
-        let testCode = response.response.trim().replace(/```[a-zA-Z]*|```/g, "")
-
-        const parser = languageToParser[language];
-        if(parser){
-            testCode = await prettier.format(testCode, { parser });
-        } else {
-            console.error("No parser found for language: ", language);
-        }
-
-        // Insert the generated unit test code into a new editor tab
-        const testDocument = await vscode.workspace.openTextDocument({
-            content: testCode,
-            language: language,
-        });
-        await vscode.window.showTextDocument(testDocument);
+    let createUnitTests = vscode.commands.registerTextEditorCommand('code-edit-qwen25.generateUnitTests', async (editor) => {
+        await generateUnitTests(editor, selectedModel, languageToTestFrameworkMap, ollama, prettier, languageToParser);
     });
 
     let completionProvider = vscode.languages.registerCompletionItemProvider(
@@ -198,36 +144,13 @@ export function activate(context: vscode.ExtensionContext) {
                 return [];
             }
             
-        }, '.');
+    }, '.');
 
-    let lintCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.lintCode', async (editor) => {
-            const userMessage = editor.document.getText(editor.selection) || editor.document.getText();
-            const inputs = `Review the following code for any common linting issues such as missing semicolons, unused variables, and minor syntax improvements. Return only the corrected code without explanations or comments.
-            Code:
-            ${userMessage}`;
-                  
-            const response = await ollama.generate({
-                model: selectedModel,
-                prompt: inputs,
-                options: {
-                    temperature: 0.3,   // Lower temperature for more specific feedback
-                    top_p: 0.9,
-                },
-            });
-        
-            let correctedCode = response.response;
-            correctedCode = correctedCode.replace(/```[a-zA-Z]*|```/g, "");
-        
-            editor.edit(editBuilder => {
-                editBuilder.replace(editor.selection, correctedCode);
-            });
-            vscode.window.showInformationMessage('Linting completed and suggestions applied.');
-        });
-        
-    // Create a webview for text generation inside the new sidebar
-    vscode.window.registerWebviewViewProvider('textGenerationView', new TextGenerationViewProvider(context, inference));
+    let lintedCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.lintCode', async (editor) => {
+            await lintCode(editor, selectedModel, languageToTestFrameworkMap, ollama, prettier, languageToParser);
+    });
 
-    let disposable = vscode.commands.registerCommand('code-edit-qwen25.helloWorld', async () => {
+    let disposable = vscode.commands.registerCommand('code-edit-qwen25.explainCode', async () => {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
             const userMessage = editor.document.getText(editor.selection);
@@ -238,9 +161,9 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(`Model changed to ${selectedModel}`);
             try {
                 const newResponse = await ollama.generate({
-                  model: selectedModel,
-                  prompt: ANNOTATION_PROMPT + userMessage,
-                  options: {
+                    model: selectedModel,
+                    prompt: ANNOTATION_PROMPT + userMessage,
+                    options: {
                     temperature: 0.7,                 // Control response randomness
                     top_p: 0.9,                       // Set to balance diversity and focus
                 }
@@ -266,8 +189,11 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
     });
+        
+    // Create a webview for text generation inside the new sidebar
+    vscode.window.registerWebviewViewProvider('textGenerationView', new TextGenerationViewProvider(context, inference));
 
-    context.subscriptions.push(generateUnitTests, lintCode, completionProvider, refactorCode, disposable, selectModel);
+    context.subscriptions.push(createUnitTests, lintedCode, refactoredCode, disposable, selectModel);
 }
 
 let suggestionCount = 0;
@@ -279,23 +205,6 @@ statusBarItem.show();
 // Each time a suggestion is made, increment the counter
 suggestionCount++;
 statusBarItem.text = `AI Suggestions: ${suggestionCount}`;
-
-// Function to filter out the ANNOTATION_PROMPT and userMessage from the AI's response
-function filterAIResponse(generatedMessage: string, userMessage: string, annotationPrompt?: string): string {
-  let filteredResponse = generatedMessage;
-
-  // Remove the ANNOTATION_PROMPT if present
-  if (annotationPrompt && filteredResponse.startsWith(annotationPrompt)) {
-      filteredResponse = filteredResponse.substring(annotationPrompt.length).trim();
-  }
-
-  // Remove the user input if present in the response
-  if (filteredResponse.includes(userMessage) || filteredResponse.startsWith(userMessage)) {
-      filteredResponse = filteredResponse.substring(userMessage.length).trim();
-  }
-
-  return filteredResponse;
-}
 
 class TextGenerationViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;

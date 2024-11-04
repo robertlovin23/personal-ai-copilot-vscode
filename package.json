@@ -14,7 +14,7 @@
   "contributes": {
     "commands": [
       {
-        "command": "code-edit-qwen25.helloWorld",
+        "command": "code-edit-qwen25.explainCode",
         "title": "Explain Code"
       },
       {
