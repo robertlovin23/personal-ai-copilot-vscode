@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { Ollama } from 'ollama'
+import { Ollama } from 'ollama';
+import eslint from 'eslint';
+import prettier from 'prettier';
 import { HfInference } from '@huggingface/inference';
 
 interface Models {
@@ -7,7 +9,11 @@ interface Models {
   description: string
 }
 
+let eslintEngine = new eslint.ESLint({ fix: true });
 let conversationHistory: { userInput: string, aiResponse: string }[] = []; // Array to store the conversation history
+
+const config = vscode.workspace.getConfiguration('files', null);
+config.get('watcherExclude');
 
 // List of models to choose from
 const models: Models[] = [
@@ -15,8 +21,22 @@ const models: Models[] = [
   { label: 'deepseek-coder-v2:16b', description: 'DeepSeek Coder 16B' },
   { label: 'qwen2.5-coder:7b', description: 'Qwen2.5 Coder 7B' }, // Add more models as needed
   { label: 'granite3-moe:3b', description: 'IBM Granite3 Moe 3B ' }, // Add more models as needed
-
 ];
+
+const languageToTestFrameworkMap: { [key: string]: string} = {
+    javascript: "Jest",
+    typescript: "Jest"
+}
+
+const languageToParser: { [key: string]: prettier.BuiltInParserName} = {
+    javascript: "babel",
+    typescript: "typescript",
+    css: "css",
+    html: "html",
+    json: "json",
+    markdown: "markdown",
+    yaml: "yaml",
+}
 
 let selectedModel = models[0].label // Default model
 
@@ -33,21 +53,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const inference = new HfInference(HF_TOKEN);
-
-    const ANNOTATION_PROMPT = `You are an AI code assistant designed to help developers write, debug, and improve code. Your primary responsibilities are:
-    1. **Code Explanation**: When a user asks you to explain a piece of code, provide a clear, concise explanation that covers the logic, flow, and purpose of the code. If appropriate, mention potential issues or improvements.
-    2. **Code Suggestions**: When a user provides a code snippet, suggest improvements in terms of readability, performance, maintainability, and adherence to best coding practices. Offer code refactoring suggestions if needed, with reasons for your recommendations.
-    3. **Error Debugging**: When a user provides an error or bug, help them troubleshoot by identifying potential causes, offering steps to debug, and suggesting fixes. Always reference common pitfalls associated with the error if applicable.
-    4. **Language Awareness**: Adapt your suggestions to the programming language being used. Whether it’s Python, JavaScript, Java, C#, or any other language, ensure that the solutions you offer follow the best practices of that language and are idiomatic. 
-    5. **Learning Guidance**: Understand that developers may have different levels of experience. Provide beginner-friendly explanations when necessary, and include advanced tips or references for more experienced users.
-    6. **Code Completion**: When asked to complete a snippet, continue the code in a way that solves the user's problem while maintaining the coding style and structure already present in their snippet.
-    7. **Documentation & Libraries**: Offer relevant information about functions, libraries, and tools being used. If appropriate, suggest using external libraries or tools to improve the implementation or efficiency. 
-    8. **Error Handling and Edge Cases**: Make sure that the code you suggest includes proper error handling and considers edge cases where applicable.
-    9. **Comments and Documentation**: Encourage the use of comments and self-documenting code. Provide short comments in your code examples to help users understand what each section does.
-    10. **User Interaction**: Ask clarifying questions if the problem or code snippet isn’t clear, and encourage the user to provide more context if needed.
-    11. **Maintain Positive Tone**: Always provide feedback in a friendly, constructive, and supportive manner. Ensure that your suggestions feel like guidance rather than criticism.
-    Remember that your goal is not only to solve the immediate issue but also to help the user become a better developer by sharing best practices and insights.
-    ` 
+    const ANNOTATION_PROMPT = `You are an AI code assistant designed to help developers understand and improve their code.
+    Given the following code snippet, please:
+    1. Provide a brief, focused explanation of what the code does.
+    2. Suggest only essential improvements related to readability, maintainability, or performance.
+    3. Return only the corrected or refactored code in JavaScript format without any additional explanations, line breaks, or indentation.
+    4. Ensure the code is formatted with consistent spacing and compact layout, avoiding unnecessary line breaks.
+    
+    Code to explain:
+    `;
+    
     let selectModel = vscode.commands.registerCommand('code-edit-qwen25.selectModel', async () => {
       const pickedModel = await vscode.window.showQuickPick(models, {
         placeHolder: 'Select a model for code generation',
@@ -55,23 +70,51 @@ export function activate(context: vscode.ExtensionContext) {
     
       if (pickedModel && typeof pickedModel.label === 'string') {
         selectedModel = pickedModel.label;  // Ensure selectedModel is a string
-        vscode.window.showInformationMessage(`Model changed to ${pickedModel.description}`);
-      } else {
-        vscode.window.showErrorMessage('Invalid model selection');
-      }
+
+           // Check if the model is already pulled
+           const availableModelsResponse = await ollama.list();
+           const availableModelNames = availableModelsResponse.models.map((model: { name: string }) => model.name);     
+            const isModelAvailable = availableModelNames.includes(selectedModel);
+
+            if (isModelAvailable) {
+                vscode.window.showInformationMessage(`Model ${pickedModel.description} is already available.`);
+                return;
+            }
+            // Show a notification that the model is being pulled
+            vscode.window.withProgress(
+                {
+                location: vscode.ProgressLocation.Notification,
+                title: `Pulling model: ${selectedModel}`,
+                cancellable: false,
+                },
+                async () => {
+                    try {
+                        // Pull the model using Ollama
+                        await ollama.pull({ model: selectedModel });
+            
+                        // Notify the user that the model is ready
+                        vscode.window.showInformationMessage(`Model ${pickedModel.description} is now ready for use.`);
+                    } catch (error: any) {
+                        vscode.window.showErrorMessage(`Failed to pull model ${pickedModel.description}: ${error.message}`);
+                    }
+                }
+            );
+        } else {
+            vscode.window.showErrorMessage('Invalid model selection');
+        }
     });
 
     let refactorCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.refactor', async (editor) => {
       const userMessage = editor.document.getText(editor.selection);
-      const inputs = `Refactor the following code to improve readability, performance, and maintainability. 
-      Please return only the refactored code, with inline comments explaining each change, in JavaScript format:
+      const inputs = `Refactor the following code to improve readability, performance, and maintainability. Return only the refactored code itself in JavaScript format, with inline comments explaining each change. No introductory phrases or non-commented text outside the code block:
       ${userMessage}`;
+      
       
       const response = await ollama.generate({
         model: selectedModel,
         prompt: inputs,
         options: {
-            temperature: 0.7,                 // Control response randomness
+            temperature: 0.6,                 // Control response randomness
             top_p: 0.9,                       // Set to balance diversity and focus
         }
       })
@@ -84,47 +127,103 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.window.showInformationMessage(`Respnse details: ${response.response}`);
           editBuilder.replace(editor.selection, data);
       });
-  });
+    });
 
-  let editWhileType = vscode.workspace.onDidChangeTextDocument(async (event) => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || event.document !== editor.document) return;
+    let generateUnitTests = vscode.commands.registerTextEditorCommand('code-edit-qwen25.generateUnitTests', async (editor) => {
+        let userMessage = editor.document.getText(editor.selection);
+        const language = editor.document.languageId;
 
-    const position = editor.selection.active;
-    const lineText = editor.document.lineAt(position.line).text.substring(0, position.character);
-    const inputs = `Refactor the following code to improve readability, performance, and maintainability. 
-    Please only return code that would be the next logical step, no comments`
+        const testFramework = languageToTestFrameworkMap[language];
+        if (!testFramework) {
+            vscode.window.showErrorMessage(`No test framework found for ${language}`);
+            return;
+        }
+        const inputs = `Given the following code snippet, write unit tests using ${testFramework} to test the functionality of the code. 
+        Return only the unit tests without any additional explanations or comments.
+        ${userMessage}`;
 
-    try {
-        const newResponse = await ollama.generate({
+        const response = await ollama.generate({
             model: selectedModel,
-            prompt: inputs + lineText,
+            prompt: inputs,
             options: {
-                temperature: 0.7,
+                temperature: 0.5,  
                 top_p: 0.9,
             },
         });
+        let testCode = response.response.trim().replace(/```[a-zA-Z]*|```/g, "")
 
-        const generatedMessage = newResponse.response;
-        
-        // Insert the suggestion as a completion item
-        const completionItem = new vscode.CompletionItem(generatedMessage, vscode.CompletionItemKind.Snippet);
-        completionItem.range = new vscode.Range(position, position);
-        completionItem.insertText = generatedMessage;
+        const parser = languageToParser[language];
+        if(parser){
+            testCode = await prettier.format(testCode, { parser });
+        } else {
+            console.error("No parser found for language: ", language);
+        }
 
-        // Show completion item in the editor
-        vscode.languages.registerCompletionItemProvider('*', {
-            provideCompletionItems() {
-                return [completionItem];
-            },
+        // Insert the generated unit test code into a new editor tab
+        const testDocument = await vscode.workspace.openTextDocument({
+            content: testCode,
+            language: language,
         });
-        vscode.commands.executeCommand('textGenerationView.update', conversationHistory, false);
+        await vscode.window.showTextDocument(testDocument);
+    });
 
-    } catch (error: any) {
-        vscode.window.showErrorMessage(`Error generating code completion: ${error.message}`);
-    }
-});
+    let completionProvider = vscode.languages.registerCompletionItemProvider(
+        {scheme: 'file', language: 'javascript'},
+        {
+            async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
+                const linePrefix = document.lineAt(position).text.substr(0, position.character);
+                const inputs = `Based on the following code context, suggest the next logical line. Provide only the suggested line of code:
+                                Context:
+                                ${linePrefix}`;
+                try{
+                    const response = await ollama.generate({
+                        model: selectedModel,
+                        prompt: inputs,
+                        options: {
+                            temperature: 0.5,   // Adjust for more deterministic responses
+                            top_p: 0.8,
+                        },
+                    });
+    
+                    const suggestion = response.response.trim();
+                    if (suggestion) {
+                        const completionItem = new vscode.CompletionItem(suggestion, vscode.CompletionItemKind.Snippet);
+                        completionItem.insertText = suggestion;
+                        return [completionItem];
+                    }
+                } catch (error: any) {
+                    vscode.window.showErrorMessage(`Error generating code completion: ${error.message}`);
+                }
+    
+                return [];
+            }
+            
+        }, '.');
 
+    let lintCode = vscode.commands.registerTextEditorCommand('code-edit-qwen25.lintCode', async (editor) => {
+            const userMessage = editor.document.getText(editor.selection) || editor.document.getText();
+            const inputs = `Review the following code for any common linting issues such as missing semicolons, unused variables, and minor syntax improvements. Return only the corrected code without explanations or comments.
+            Code:
+            ${userMessage}`;
+                  
+            const response = await ollama.generate({
+                model: selectedModel,
+                prompt: inputs,
+                options: {
+                    temperature: 0.3,   // Lower temperature for more specific feedback
+                    top_p: 0.9,
+                },
+            });
+        
+            let correctedCode = response.response;
+            correctedCode = correctedCode.replace(/```[a-zA-Z]*|```/g, "");
+        
+            editor.edit(editBuilder => {
+                editBuilder.replace(editor.selection, correctedCode);
+            });
+            vscode.window.showInformationMessage('Linting completed and suggestions applied.');
+        });
+        
     // Create a webview for text generation inside the new sidebar
     vscode.window.registerWebviewViewProvider('textGenerationView', new TextGenerationViewProvider(context, inference));
 
@@ -168,7 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     });
 
-    context.subscriptions.push(editWhileType, refactorCode, disposable, selectModel);
+    context.subscriptions.push(generateUnitTests, lintCode, completionProvider, refactorCode, disposable, selectModel);
 }
 
 let suggestionCount = 0;
@@ -228,7 +327,8 @@ class TextGenerationViewProvider implements vscode.WebviewViewProvider {
             return `
                 <div class="text-section">
                     <h2>User Input</h2>
-                    <p class="user-input">${formattedUserMessage}</p>
+                    <p class="user-input">
+                    <pre class="code-block">${formattedUserMessage}</pre></p>
                     <h2>AI Response</h2>
                     <div class="ai-response">
                         ${formattedGeneratedMessage}

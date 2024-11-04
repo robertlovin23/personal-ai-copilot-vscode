@@ -2,6 +2,7 @@
 	"compilerOptions": {
 	  "target": "esnext",
 	  "module": "commonjs",
+	  "sourceMap": true,
 	  "lib": ["esnext", "dom"],  // Add "dom" here
 	  "moduleResolution": "node",
 	  "outDir": "./out",

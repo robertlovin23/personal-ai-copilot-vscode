@@ -4,7 +4,7 @@
   "description": "",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.94.2"
   },
   "categories": [
     "Other"
@@ -22,8 +22,16 @@
         "title": "Refactor Code"
       },
       {
+        "command": "code-edit-qwen25.generateUnitTests",
+        "title": "Generate Unit Tests"
+      },
+      {
         "command": "code-edit-qwen25.selectModel",
         "title": "Select Model for Code Generation"
+      },
+      {
+        "command": "code-edit-qwen25.lintCode",
+        "title": "Lint Code"
       }
     ],
     "viewsContainers": {
@@ -56,12 +64,12 @@
   "devDependencies": {
     "@types/mocha": "^10.0.8",
     "@types/node": "20.x",
-    "@types/vscode": "^1.94.0",
+    "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^8.7.0",
     "@typescript-eslint/parser": "^8.7.0",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1",
-    "eslint": "^9.11.1",
+    "@vscode/test-electron": "^2.3.0",
+    "eslint": "^9.13.0",
     "typescript": "^5.6.2"
   },
   "dependencies": {
@@ -72,6 +80,7 @@
     "groq-sdk": "^0.7.0",
     "nvm": "^0.0.4",
     "ollama": "^0.5.9",
+    "prettier": "^3.3.3",
     "torch": "^0.2.7"
   }
 }
